@@ -1067,8 +1067,8 @@ def main():
         help="Filter episodes by robot type (h1, g1, or both)",
     )
     parser.add_argument("--meta-only", action="store_true", help="Skip data/video generation and only write meta files")
-    parser.add_argument("--urdf-g1", type=str, default="/hfm/data/assets/robots/g1/g1_body29_hand14.urdf")
-    parser.add_argument("--urdf-h1", type=str, default="/hfm/data/assets/robots/h1_inspire/urdf/h1_inspire.urdf")
+    parser.add_argument("--urdf-g1", type=str, default="./real/assets/g1/g1_body29_hand14.urdf")
+    parser.add_argument("--urdf-h1", type=str, default="./real/assets/h1_inspire/urdf/h1_inspire.urdf")
     args = parser.parse_args()
 
     data_root = Path(args.data_root).expanduser().resolve()
