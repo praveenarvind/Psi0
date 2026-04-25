@@ -14,7 +14,7 @@ from merger import DataMerger
 from robot_control.robot_body import G1_29_BodyController
 from robot_control.robot_body_ik import G1_29_BodyIK
 from robot_control.robot_hand_inspire import Inspire_Controller
-from robot_control.robot_hand_unitree import Dex3_1_Controller
+from robot_control.robot_hand_unitree import Dex1_1_Controller, Dex3_1_Controller
 from utils.logger import logger
 from writers import IKDataWriter
 from robot_control.compute_tau import GetTauer
@@ -66,6 +66,18 @@ class RobotTaskmaster:
 
         self.task_name = task_name
         self.robot = robot
+        self.hand_type = shared_data.get("hand_type", "dex3")
+        self.dex1_control_mode = shared_data.get("dex1_control_mode", "gesture_open_close")
+        self.dex1_open_q = float(shared_data.get("dex1_open_q", 0.0))
+        self.dex1_close_q = float(shared_data.get("dex1_close_q", 5.5))
+        self.dex1_fist_threshold = float(shared_data.get("dex1_fist_threshold", 0.85))
+        self.dex1_open_threshold = float(shared_data.get("dex1_open_threshold", 0.55))
+        self.dex1_fist_polarity = shared_data.get("dex1_fist_polarity", "high_is_fist")
+        self.dex1_debug = bool(shared_data.get("dex1_debug", False))
+        self.dex1_debug_interval_sec = 0.75
+        self._last_dex1_debug_ts = 0.0
+        self._left_hand_closed = False
+        self._right_hand_closed = False
 
         self.shared_data = shared_data
         self.episode_kill_event = shared_data["kill_event"]
@@ -203,12 +215,18 @@ class RobotTaskmaster:
                     (14,), dtype=np.float64, buffer=self.hand_shm.buf
                 )
 
-                self.hand_ctrl = Dex3_1_Controller(
-                    self.hand_shm_array,
-                    self.dual_hand_data_lock,
-                    dual_hand_state_array,
-                    dual_hand_action_array,
-                )
+                if self.hand_type == "dex1":
+                    self.hand_ctrl = Dex1_1_Controller(
+                        open_q=self.dex1_open_q,
+                        close_q=self.dex1_close_q,
+                    )
+                else:
+                    self.hand_ctrl = Dex3_1_Controller(
+                        self.hand_shm_array,
+                        self.dual_hand_data_lock,
+                        dual_hand_state_array,
+                        dual_hand_action_array,
+                    )
             else:
                 logger.error("unknown robot")
                 exit(-1)
@@ -268,6 +286,51 @@ class RobotTaskmaster:
             # self.right_hand_array[:] = right_qpos
             # self.hand_ctrl.ctrl_dual_hand(right_qpos, left_qpos)
         return left_qpos, right_qpos
+
+    def _is_hand_closed_from_qpos(self, qpos, was_closed):
+        if qpos is None or len(qpos) == 0:
+            return was_closed
+        signal = float(np.mean(np.array(qpos)[[0, 2, 4, 6]]))
+        if self.dex1_fist_polarity == "low_is_fist":
+            if signal <= self.dex1_fist_threshold:
+                return True
+            if signal >= self.dex1_open_threshold:
+                return False
+            return was_closed
+
+        if signal >= self.dex1_fist_threshold:
+            return True
+        if signal <= self.dex1_open_threshold:
+            return False
+        return was_closed
+
+    def _fist_signal_from_qpos(self, qpos):
+        if qpos is None or len(qpos) == 0:
+            return float("nan")
+        return float(np.mean(np.array(qpos)[[0, 2, 4, 6]]))
+
+    def _maybe_print_dex1_debug(self, left_signal, right_signal, left_cmd_q, right_cmd_q):
+        if not self.dex1_debug:
+            return
+        now = time.time()
+        if now - self._last_dex1_debug_ts < self.dex1_debug_interval_sec:
+            return
+        self._last_dex1_debug_ts = now
+
+        polarity_label = (
+            "normal(high_is_fist)"
+            if self.dex1_fist_polarity == "high_is_fist"
+            else "inverted(low_is_fist)"
+        )
+        left_state = "closed" if self._left_hand_closed else "open"
+        right_state = "closed" if self._right_hand_closed else "open"
+        print(
+            "[Dex1 Debug] "
+            f"polarity={polarity_label}, "
+            f"left_signal={left_signal:.3f}, right_signal={right_signal:.3f}, "
+            f"left_state={left_state}, right_state={right_state}, "
+            f"left_cmd_q={left_cmd_q:.3f}, right_cmd_q={right_cmd_q:.3f}"
+        )
 
     def start(self):
         # logger.debug(f"Master: Process ID (PID) {os.getpid()}")
@@ -791,9 +854,31 @@ class RobotTaskmaster:
             if self.robot == "h1":
                 self.setHandMotors(right_qpos, left_qpos)
             elif self.robot == "g1":
-                with self.dual_hand_data_lock:
-                    self.hand_shm_array[0:7] = left_qpos
-                    self.hand_shm_array[7:14] = right_qpos
+                if self.hand_type == "dex1" and self.dex1_control_mode == "gesture_open_close":
+                    left_signal = self._fist_signal_from_qpos(left_qpos)
+                    right_signal = self._fist_signal_from_qpos(right_qpos)
+                    self._left_hand_closed = self._is_hand_closed_from_qpos(
+                        left_qpos, self._left_hand_closed
+                    )
+                    self._right_hand_closed = self._is_hand_closed_from_qpos(
+                        right_qpos, self._right_hand_closed
+                    )
+                    left_cmd_q = self.dex1_close_q if self._left_hand_closed else self.dex1_open_q
+                    right_cmd_q = self.dex1_close_q if self._right_hand_closed else self.dex1_open_q
+                    self._maybe_print_dex1_debug(
+                        left_signal=left_signal,
+                        right_signal=right_signal,
+                        left_cmd_q=left_cmd_q,
+                        right_cmd_q=right_cmd_q,
+                    )
+                    self.hand_ctrl.ctrl_open_close(
+                        left_is_closed=self._left_hand_closed,
+                        right_is_closed=self._right_hand_closed,
+                    )
+                else:
+                    with self.dual_hand_data_lock:
+                        self.hand_shm_array[0:7] = left_qpos
+                        self.hand_shm_array[7:14] = right_qpos
 
             # logger.debug("Master: writing data")
             # logger.debug(f"Master: head_rmat: {head_rmat}")
@@ -922,4 +1007,3 @@ class RobotTaskmaster:
             self.hand_shm_array[:] = hand_poseList
 
         self.body_ctrl.ctrl_whole_body(pd_target[15:], pd_tauff[15:], pd_target[:15], pd_tauff[:15])
-
