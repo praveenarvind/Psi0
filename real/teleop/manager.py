@@ -24,7 +24,20 @@ sys.path.append(parent_dir)
 
 
 class TeleopManager:
-    def __init__(self, task_name="default_task", robot="h1", debug=False):
+    def __init__(
+        self,
+        task_name="default_task",
+        robot="h1",
+        debug=False,
+        hand_type="dex3",
+        dex1_control_mode="gesture_open_close",
+        dex1_open_q=0.0,
+        dex1_close_q=5.5,
+        dex1_fist_threshold=0.85,
+        dex1_open_threshold=0.55,
+        dex1_fist_polarity="high_is_fist",
+        dex1_debug=False,
+    ):
         self.task_name = task_name
         logger.info(f"#### (Task: {self.task_name}):")
         if debug:
@@ -39,6 +52,14 @@ class TeleopManager:
         self.shared_dict["session_start_event"] = self.manager.Event()
         self.shared_dict["failure_event"] = self.manager.Event()
         self.shared_dict["end_event"] = self.manager.Event()  # TODO: redundent
+        self.shared_dict["hand_type"] = hand_type
+        self.shared_dict["dex1_control_mode"] = dex1_control_mode
+        self.shared_dict["dex1_open_q"] = float(dex1_open_q)
+        self.shared_dict["dex1_close_q"] = float(dex1_close_q)
+        self.shared_dict["dex1_fist_threshold"] = float(dex1_fist_threshold)
+        self.shared_dict["dex1_open_threshold"] = float(dex1_open_threshold)
+        self.shared_dict["dex1_fist_polarity"] = dex1_fist_polarity
+        self.shared_dict["dex1_debug"] = bool(dex1_debug)
         self.progress_tracker = ProgressTracker()
 
         if robot == "h1":
