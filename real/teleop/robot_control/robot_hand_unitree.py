@@ -438,23 +438,6 @@ class Dex1_1_Controller:
         right_q = self.close_q if right_is_closed else self.open_q
         self.ctrl_dual_hand(left_q, right_q)
 
-    def get_current_dual_hand_q(self):
-        """
-        Keep the same interface/shape as Dex3 path (14 values = 7 left + 7 right)
-        so upstream shared-memory packing in master code does not break.
-        """
-        q = np.zeros(14, dtype=np.float64)
-        q[0:7] = self.left_state_q
-        q[7:14] = self.right_state_q
-        return q
-
-    def get_current_dual_hand_pressure(self):
-        """
-        Dex1 service does not expose Dex3-style 9x12 tactile arrays per hand.
-        Return zeros with Dex3-compatible shape: (18, 12), then master flattens to 216.
-        """
-        return np.zeros((18, 12), dtype=np.float64)
-
     def shutdown(self):
         self.stop_event.set()
 
