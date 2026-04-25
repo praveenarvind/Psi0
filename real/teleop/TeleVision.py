@@ -184,7 +184,7 @@ class OpenTeleVision:
             fps=fps, stream=True, key="hands", showLeft=False, showRight=False
         )
         session.upsert @ WebRTCVideoPlane(
-            src="https://192.168.8.102:8080/offer",
+            src="https://192.168.50.154:8080/offer",
             key="zed",
             aspect=1.33334,
             height=8,

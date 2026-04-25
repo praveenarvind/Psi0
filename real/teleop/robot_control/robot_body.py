@@ -131,7 +131,7 @@ class BaseBodyController:
         while not self.lowstate_buffer.GetData():
             time.sleep(0.01)
             logger.info(
-                f"[{self.robot_type}_ArmController] Waiting to subscribe dds..."
+                f"[{self.robot_type}_ArmController3] Waiting to subscribe dds..."
             )
 
         # Initialize command message
@@ -434,7 +434,7 @@ class BaseBodyController:
         while not self.lowstate_buffer.GetData():
             time.sleep(0.01)
             logger.info(
-                f"[{self.robot_type}_ArmController] Waiting to subscribe dds..."
+                f"[{self.robot_type}_ArmController4] Waiting to subscribe dds..."
             )
 
         self.publish_thread = threading.Thread(target=self._ctrl_motor_state)

@@ -29,6 +29,10 @@ kTopicDex3LeftCommand = "rt/dex3/left/cmd"
 kTopicDex3RightCommand = "rt/dex3/right/cmd"
 kTopicDex3LeftState = "rt/dex3/left/state"
 kTopicDex3RightState = "rt/dex3/right/state"
+kTopicDex1LeftCommand = "rt/dex1/left/cmd"
+kTopicDex1RightCommand = "rt/dex1/right/cmd"
+kTopicDex1LeftState = "rt/dex1/left/state"
+kTopicDex1RightState = "rt/dex1/right/state"
 
 
 class Dex3_1_Controller:
@@ -354,3 +358,94 @@ class Dex3_1_Right_JointIndex(IntEnum):
     kRightHandIndex1 = 4
     kRightHandMiddle0 = 5
     kRightHandMiddle1 = 6
+
+
+class Dex1_1_Controller:
+    """
+    DDS controller for Unitree Dex1-1 gripper service (left + right, one motor each).
+
+    Dex1-1 topics (from Unitree dex1_1_service):
+      - rt/dex1/left/cmd,  rt/dex1/left/state
+      - rt/dex1/right/cmd, rt/dex1/right/state
+    """
+
+    def __init__(self, open_q=0.0, close_q=5.5, kp=5.0, kd=0.05):
+        print("Initialize Dex1_1_Controller...")
+        self.open_q = float(open_q)
+        self.close_q = float(close_q)
+
+        self.left_cmd = MotorCmds_()
+        self.right_cmd = MotorCmds_()
+        self.left_cmd.cmds = [unitree_go_msg_dds__MotorCmd_()]
+        self.right_cmd.cmds = [unitree_go_msg_dds__MotorCmd_()]
+
+        # Mode=1 matches unitree dex1_1_service test client.
+        self.left_cmd.cmds[0].mode = 1
+        self.right_cmd.cmds[0].mode = 1
+        self.left_cmd.cmds[0].kp = float(kp)
+        self.right_cmd.cmds[0].kp = float(kp)
+        self.left_cmd.cmds[0].kd = float(kd)
+        self.right_cmd.cmds[0].kd = float(kd)
+        self.left_cmd.cmds[0].dq = 0.0
+        self.right_cmd.cmds[0].dq = 0.0
+        self.left_cmd.cmds[0].tau = 0.0
+        self.right_cmd.cmds[0].tau = 0.0
+        self.left_cmd.cmds[0].q = self.open_q
+        self.right_cmd.cmds[0].q = self.open_q
+
+        self.LeftHandCmb_publisher = ChannelPublisher(kTopicDex1LeftCommand, MotorCmds_)
+        self.RightHandCmb_publisher = ChannelPublisher(kTopicDex1RightCommand, MotorCmds_)
+        self.LeftHandCmb_publisher.Init()
+        self.RightHandCmb_publisher.Init()
+
+        self.LeftHandState_subscriber = ChannelSubscriber(kTopicDex1LeftState, MotorStates_)
+        self.RightHandState_subscriber = ChannelSubscriber(kTopicDex1RightState, MotorStates_)
+        self.LeftHandState_subscriber.Init()
+        self.RightHandState_subscriber.Init()
+
+        self.left_state_q = 0.0
+        self.right_state_q = 0.0
+        self.stop_event = Event()
+        self.subscribe_state_thread = threading.Thread(target=self._subscribe_hand_state)
+        self.subscribe_state_thread.daemon = True
+        self.subscribe_state_thread.start()
+
+        print("Initialize Dex1_1_Controller OK!\n")
+
+    def _subscribe_hand_state(self):
+        while not self.stop_event.is_set():
+            left_msg = self.LeftHandState_subscriber.Read()
+            right_msg = self.RightHandState_subscriber.Read()
+            if left_msg is not None and len(left_msg.states) > 0:
+                self.left_state_q = left_msg.states[0].q
+            if right_msg is not None and len(right_msg.states) > 0:
+                self.right_state_q = right_msg.states[0].q
+            time.sleep(0.002)
+
+    def ctrl_dual_hand(self, left_q_target, right_q_target):
+        if isinstance(left_q_target, (list, tuple, np.ndarray)):
+            left_q_target = float(left_q_target[0])
+        if isinstance(right_q_target, (list, tuple, np.ndarray)):
+            right_q_target = float(right_q_target[0])
+
+        self.left_cmd.cmds[0].q = float(left_q_target)
+        self.right_cmd.cmds[0].q = float(right_q_target)
+        self.LeftHandCmb_publisher.Write(self.left_cmd)
+        self.RightHandCmb_publisher.Write(self.right_cmd)
+
+    def ctrl_open_close(self, left_is_closed: bool, right_is_closed: bool):
+        left_q = self.close_q if left_is_closed else self.open_q
+        right_q = self.close_q if right_is_closed else self.open_q
+        self.ctrl_dual_hand(left_q, right_q)
+
+    def shutdown(self):
+        self.stop_event.set()
+
+    def reset(self, max_wait_sec=5.0):
+        pass
+
+    def get_current_dual_hand_q(self):
+        return np.zeros(14)
+
+    def get_current_dual_hand_pressure(self):
+        return np.zeros(216)
