@@ -274,10 +274,9 @@ class RobotTaskmaster:
     def update_avp_locomotion_command(self, head_mat):
         now = time.time()
         max_vx, max_vy, max_vyaw = 0.35, 0.25, 0.5
-        deadband_xy, deadband_yaw = 0.03, 0.08
+        deadband_xy, deadband_yaw = 0.01, 0.08
         jump_thresh = 0.35
-        alpha = 0.2
-        yaw_gain = 1.1
+        alpha = 0.25
 
         if head_mat is None or not np.all(np.isfinite(head_mat)) or np.allclose(head_mat, 0.0):
             self.vx = self.vy = self.vyaw = 0.0
@@ -304,12 +303,11 @@ class RobotTaskmaster:
         rel_pos_world = curr_pos - self.avp_origin_pos
         c0 = np.cos(self.avp_origin_yaw)
         s0 = np.sin(self.avp_origin_yaw)
-        # Use *frame-to-frame* translation delta for velocity commands so
-        # standing still naturally converges to zero command.
-        local_dx = c0 * step_delta[0] + s0 * step_delta[1]
-        local_dy = -s0 * step_delta[0] + c0 * step_delta[1]
-        raw_vx = local_dx / dt
-        raw_vy = local_dy / dt
+        rel_x = c0 * rel_pos_world[0] + s0 * rel_pos_world[1]
+        rel_y = -s0 * rel_pos_world[0] + c0 * rel_pos_world[1]
+
+        raw_vx = rel_x / dt
+        raw_vy = rel_y / dt
         if abs(raw_vx) < deadband_xy:
             raw_vx = 0.0
         if abs(raw_vy) < deadband_xy:
@@ -317,9 +315,7 @@ class RobotTaskmaster:
 
         yaw_err = curr_yaw - self.avp_origin_yaw
         yaw_err = (yaw_err + np.pi) % (2 * np.pi) - np.pi
-        # Use yaw offset (not derivative) so turning and holding left/right
-        # keeps a consistent turning command.
-        raw_vyaw = yaw_gain * yaw_err
+        raw_vyaw = (yaw_err - self._avp_prev_yaw_err) / dt
         if abs(raw_vyaw) < deadband_yaw:
             raw_vyaw = 0.0
 
