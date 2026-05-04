@@ -28,6 +28,16 @@ if __name__ == "__main__":
     parser.add_argument("--dex1-fist-threshold", type=float, default=0.2)
     parser.add_argument("--dex1-open-threshold", type=float, default=0.05)
     parser.add_argument(
+        "--avp-locomotion",
+        action="store_true",
+        help="Use AVP head yaw/translation to command base locomotion and lock torso.",
+    )
+    parser.add_argument(
+        "--reset-avp-calibration-on-start",
+        action="store_true",
+        help="Reset AVP locomotion neutral pose when a session starts.",
+    )
+    parser.add_argument(
         "--dex1-fist-polarity",
         default="high_is_fist",
         choices=["high_is_fist", "low_is_fist"],
@@ -52,6 +62,8 @@ if __name__ == "__main__":
         dex1_open_threshold=args.dex1_open_threshold,
         dex1_fist_polarity=args.dex1_fist_polarity,
         dex1_debug=args.dex1_debug,
+        avp_locomotion=args.avp_locomotion,
+        reset_avp_calibration_on_start=args.reset_avp_calibration_on_start,
     )
     manager.start_processes()
     # TODO: run in two separate terminals for debuggnig
