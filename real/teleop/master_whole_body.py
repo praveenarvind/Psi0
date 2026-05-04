@@ -74,6 +74,10 @@ class RobotTaskmaster:
         self.dex1_open_threshold = float(shared_data.get("dex1_open_threshold", 0.55))
         self.dex1_fist_polarity = shared_data.get("dex1_fist_polarity", "high_is_fist")
         self.dex1_debug = bool(shared_data.get("dex1_debug", False))
+        self.avp_locomotion_enabled = bool(shared_data.get("avp_locomotion", False))
+        self.reset_avp_calibration_on_start = bool(
+            shared_data.get("reset_avp_calibration_on_start", False)
+        )
         self.dex1_debug_interval_sec = 0.75
         self._last_dex1_debug_ts = 0.0
         self._left_hand_closed = False
@@ -184,6 +188,15 @@ class RobotTaskmaster:
         self.prev_vyaw = 0.0
         self.prev_dyaw = 0.0
         self.prev_target_yaw = 0.0
+        self.avp_origin_pos = None
+        self.avp_origin_yaw = None
+        self.prev_avp_pos = None
+        self.prev_avp_time = None
+        self.filtered_vx = 0.0
+        self.filtered_vy = 0.0
+        self.filtered_vyaw = 0.0
+        self._avp_prev_yaw_err = 0.0
+        self._avp_last_valid_time = 0.0
 
         # self.tau_history = []
         # self.tau_log_path = f"tau_log_{int(time.time())}.csv"
@@ -242,6 +255,92 @@ class RobotTaskmaster:
         self.running = False
         # self.h1_lock = Lock()
         self._idx = 0
+
+    def extract_yaw_from_head_mat(self, head_mat):
+        if head_mat is None or head_mat.shape[0] < 3 or head_mat.shape[1] < 3:
+            return None
+        return float(np.arctan2(head_mat[1, 0], head_mat[0, 0]))
+
+    def reset_avp_locomotion_calibration(self, head_mat):
+        self.avp_origin_pos = np.array(head_mat[:3, 3], dtype=np.float64)
+        self.avp_origin_yaw = self.extract_yaw_from_head_mat(head_mat)
+        self.prev_avp_pos = self.avp_origin_pos.copy()
+        self.prev_avp_time = time.time()
+        self.filtered_vx = 0.0
+        self.filtered_vy = 0.0
+        self.filtered_vyaw = 0.0
+        self._avp_prev_yaw_err = 0.0
+
+    def update_avp_locomotion_command(self, head_mat):
+        now = time.time()
+        max_vx, max_vy, max_vyaw = 0.35, 0.25, 0.5
+        deadband_xy, deadband_yaw = 0.01, 0.08
+        jump_thresh = 0.35
+        alpha = 0.25
+
+        if head_mat is None or not np.all(np.isfinite(head_mat)) or np.allclose(head_mat, 0.0):
+            self.vx = self.vy = self.vyaw = 0.0
+            return
+
+        curr_pos = np.array(head_mat[:3, 3], dtype=np.float64)
+        curr_yaw = self.extract_yaw_from_head_mat(head_mat)
+        if curr_yaw is None:
+            self.vx = self.vy = self.vyaw = 0.0
+            return
+
+        if self.avp_origin_pos is None or self.avp_origin_yaw is None:
+            self.reset_avp_locomotion_calibration(head_mat)
+            self.vx = self.vy = self.vyaw = 0.0
+            return
+
+        dt = max(now - self.prev_avp_time, 1e-3) if self.prev_avp_time is not None else self.dt
+        step_delta = curr_pos - self.prev_avp_pos if self.prev_avp_pos is not None else np.zeros(3)
+        if np.linalg.norm(step_delta) > jump_thresh:
+            self.vx = self.vy = self.vyaw = 0.0
+            self.prev_avp_time = now
+            return
+
+        rel_pos_world = curr_pos - self.avp_origin_pos
+        c0 = np.cos(self.avp_origin_yaw)
+        s0 = np.sin(self.avp_origin_yaw)
+        rel_x = c0 * rel_pos_world[0] + s0 * rel_pos_world[1]
+        rel_y = -s0 * rel_pos_world[0] + c0 * rel_pos_world[1]
+
+        raw_vx = rel_x / dt
+        raw_vy = rel_y / dt
+        if abs(raw_vx) < deadband_xy:
+            raw_vx = 0.0
+        if abs(raw_vy) < deadband_xy:
+            raw_vy = 0.0
+
+        yaw_err = curr_yaw - self.avp_origin_yaw
+        yaw_err = (yaw_err + np.pi) % (2 * np.pi) - np.pi
+        raw_vyaw = (yaw_err - self._avp_prev_yaw_err) / dt
+        if abs(raw_vyaw) < deadband_yaw:
+            raw_vyaw = 0.0
+
+        self.filtered_vx = (1 - alpha) * self.filtered_vx + alpha * raw_vx
+        self.filtered_vy = (1 - alpha) * self.filtered_vy + alpha * raw_vy
+        self.filtered_vyaw = (1 - alpha) * self.filtered_vyaw + alpha * raw_vyaw
+
+        self.vx = float(np.clip(self.filtered_vx, -max_vx, max_vx))
+        self.vy = float(np.clip(self.filtered_vy, -max_vy, max_vy))
+        self.vyaw = float(np.clip(self.filtered_vyaw, -max_vyaw, max_vyaw))
+        self._avp_prev_yaw_err = yaw_err
+        self.prev_avp_pos = curr_pos
+        self.prev_avp_time = now
+
+        if self.shared_data.get("debug", False):
+            logger.debug(
+                "AVP locomotion | yaw=%.3f rel_pos=[%.3f, %.3f, %.3f] cmd=[vx=%.3f, vy=%.3f, vyaw=%.3f]",
+                curr_yaw,
+                rel_pos_world[0],
+                rel_pos_world[1],
+                rel_pos_world[2],
+                self.vx,
+                self.vy,
+                self.vyaw,
+            )
     
     
 
@@ -779,6 +878,11 @@ class RobotTaskmaster:
         self.vx = 0.0 
         self.vy = 0.0
         self.vyaw = 0.0
+        if self.avp_locomotion_enabled and self.reset_avp_calibration_on_start:
+            self.avp_origin_pos = None
+            self.avp_origin_yaw = None
+            self.prev_avp_pos = None
+            self.prev_avp_time = None
         
         is_first_frame = True
         while not self.episode_kill_event.is_set():
@@ -800,6 +904,8 @@ class RobotTaskmaster:
 
             # self.arm_ctrl.gradually_increase_weight_to_1()
             if not get_tv_success:
+                if self.avp_locomotion_enabled:
+                    self.vx = self.vy = self.vyaw = 0.0
                 continue
             
             current_h = self.torso_height
@@ -818,21 +924,23 @@ class RobotTaskmaster:
                 continuous_quat_xyzw[2]   # z
             ])
 
-            new_h, new_rpy = self.body_ik.solve_lower_ik(
-                self.motorstate, self.odom_pos, continuous_quat_wxyz, 
-                left_pose, right_pose, head_rmat, current_h, current_rpy
-            )
-
-
-            self.torso_height = new_h
-            self.torso_roll = new_rpy[0]
-            self.torso_pitch = new_rpy[1]
-
-            # yaw_diff = new_rpy[2] - current_rpy[2]
-            # yaw_diff = np.remainder(yaw_diff + np.pi, 2 * np.pi) - np.pi
-            # new_rpy[2] = current_rpy[2] + yaw_diff 
-
-            self.torso_yaw = new_rpy[2]
+            if self.avp_locomotion_enabled:
+                self.update_avp_locomotion_command(head_rmat)
+                self.torso_height = 0.75
+                self.torso_roll = 0.0
+                self.torso_pitch = 0.0
+                self.torso_yaw = 0.0
+                new_h = self.torso_height
+                new_rpy = np.array([self.torso_roll, self.torso_pitch, self.torso_yaw], dtype=np.float64)
+            else:
+                new_h, new_rpy = self.body_ik.solve_lower_ik(
+                    self.motorstate, self.odom_pos, continuous_quat_wxyz,
+                    left_pose, right_pose, head_rmat, current_h, current_rpy
+                )
+                self.torso_height = new_h
+                self.torso_roll = new_rpy[0]
+                self.torso_pitch = new_rpy[1]
+                self.torso_yaw = new_rpy[2]
 
 
 
