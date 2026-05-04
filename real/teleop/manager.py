@@ -37,6 +37,8 @@ class TeleopManager:
         dex1_open_threshold=0.55,
         dex1_fist_polarity="high_is_fist",
         dex1_debug=False,
+        avp_locomotion=False,
+        reset_avp_calibration_on_start=False,
     ):
         self.task_name = task_name
         logger.info(f"#### (Task: {self.task_name}):")
@@ -60,6 +62,11 @@ class TeleopManager:
         self.shared_dict["dex1_open_threshold"] = float(dex1_open_threshold)
         self.shared_dict["dex1_fist_polarity"] = dex1_fist_polarity
         self.shared_dict["dex1_debug"] = bool(dex1_debug)
+        self.shared_dict["debug"] = bool(debug)
+        self.shared_dict["avp_locomotion"] = bool(avp_locomotion)
+        self.shared_dict["reset_avp_calibration_on_start"] = bool(
+            reset_avp_calibration_on_start
+        )
         self.progress_tracker = ProgressTracker()
 
         if robot == "h1":
